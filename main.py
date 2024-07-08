@@ -60,7 +60,7 @@ def get_total_results(query, time_range):
         if result_stats:
             total_results = int(''.join(filter(str.isdigit, result_stats.text)))
             print(f"Total results found: {total_results}, but Google typically shows a maximum of 300 results.")
-            return min(total_results, 300)  # Limit to 300 results
+            return min(total_results, 300)  
         else:
             print("Couldn't find total results. Defaulting to 300.")
             return 300
@@ -92,9 +92,9 @@ def convert_to_timestamp(relative_time):
         "days": "days",
         "week": "weeks",
         "weeks": "weeks",
-        "month": "days",  # Approximate month as 30 days
+        "month": "days",  
         "months": "days",
-        "year": "days",   # Approximate year as 365 days
+        "year": "days",   
         "years": "days"
     }
 
@@ -155,19 +155,19 @@ def main():
         if len(all_news_data) >= limit:
             break
         
-        time.sleep(2)  # Add a delay to avoid overwhelming the server
+        time.sleep(2)  
     
     all_news_data = all_news_data[:limit]
     
     print(f"\nExtracted {len(all_news_data)} news items.")
     
-    # Create a DataFrame from the extracted data
+   
     df = pd.DataFrame(all_news_data)
     
-    # Generate a filename based on the query and current timestamp
+   
     filename = f"google_news_{query.replace(' ', '_')}_{int(time.time())}.csv"
     
-    # Save the DataFrame to a CSV file
+    
     df.to_csv(filename, index=False, encoding='utf-8-sig')
     
     print(f"\nData saved to {filename}")
