@@ -2,7 +2,10 @@ import urllib.parse
 import requests
 from bs4 import BeautifulSoup
 from math import ceil
+import time
 from requests_html import HTMLSession
+import pandas as pd
+from datetime import datetime, timedelta
 
 def get_time_range():
     print("\nSelect a time range:")
@@ -42,68 +45,132 @@ def get_total_results(query, time_range):
     params = {
         "q": query,
         "tbm": "nws",
-        "num": 100
+        "num": 1
     }
     if time_range:
         params["tbs"] = time_range
     
     url = f"{base_url}?{urllib.parse.urlencode(params)}"
-    print(url)
     try:
         session = HTMLSession()
         r = session.get(url)
-        r.html.render(sleep=4)
+        r.html.render(sleep=4) 
         soup = BeautifulSoup(r.html.raw_html, "html.parser")
         result_stats = soup.find('div', {'id': 'result-stats'})
         if result_stats:
-            print(result_stats)
             total_results = int(''.join(filter(str.isdigit, result_stats.text)))
-            print(f"Total results found: {total_results}")
-            return min(total_results, 1000)  # Google typically limits to 1000 results
+            print(f"Total results found: {total_results}, but Google typically shows a maximum of 300 results.")
+            return min(total_results, 300)  # Limit to 300 results
         else:
-            print("Couldn't find total results. Defaulting to 1000.")
-            return 1000
+            print("Couldn't find total results. Defaulting to 300.")
+            return 300
     except Exception as e:
         print(f"Error fetching total results: {e}")
-        return 1000
+        return 300
 
-def generate_urls(query, time_range, limit):
-    total_results = get_total_results(query, time_range)
-    limit = min(limit, total_results)
-    
+def generate_url(query, time_range, start):
     base_url = "https://www.google.com/search"
-    urls = []
-    results_per_page = 100
-    num_pages = ceil(limit / results_per_page)
+    params = {
+        "q": query,
+        "tbm": "nws",
+        "num": 100,
+        "start": start
+    }
+    if time_range:
+        params["tbs"] = time_range
     
-    for page in range(num_pages):
-        remaining = limit - page * results_per_page
-        params = {
-            "q": query,
-            "tbm": "nws",
-            "num": min(results_per_page, remaining),
-            "start": page * results_per_page
-        }
+    return f"{base_url}?{urllib.parse.urlencode(params)}"
+
+def convert_to_timestamp(relative_time):
+    current_time = datetime.now()
+    time_units = {
+        "minute": "minutes",
+        "minutes": "minutes",
+        "hour": "hours",
+        "hours": "hours",
+        "day": "days",
+        "days": "days",
+        "week": "weeks",
+        "weeks": "weeks",
+        "month": "days",  # Approximate month as 30 days
+        "months": "days",
+        "year": "days",   # Approximate year as 365 days
+        "years": "days"
+    }
+
+    number, unit = relative_time.split()[:2]
+    number = int(number)
+    if "month" in unit:
+        number *= 30
+    elif "year" in unit:
+        number *= 365
+
+    delta = timedelta(**{time_units.get(unit, "days"): number})
+    timestamp = current_time - delta
+    return timestamp.strftime("%Y-%m-%d %H:%M:%S")
+
+def extract_news_data(url):
+    session = HTMLSession()
+    r = session.get(url)
+    r.html.render(sleep=4) 
+    soup = BeautifulSoup(r.html.raw_html, "html.parser")
+    news_results = []
+    for item in soup.find_all('div', class_='SoaBEf'):
+        title = item.find('div', class_='MBeuO').text if item.find('div', class_='MBeuO') else 'N/A'
+        link = item.find('a', class_='WlydOe')['href'] if item.find('a', class_='WlydOe') else 'N/A'
+        description = item.find('div', class_='GI74Re').text if item.find('div', class_='GI74Re') else 'N/A'
+        source_time = item.find('div', class_='OSrXXb').text if item.find('div', class_='OSrXXb') else 'N/A'
         
-        if time_range:
-            params["tbs"] = time_range
-        
-        url = f"{base_url}?{urllib.parse.urlencode(params)}"
-        urls.append(url)
+        if 'ago' in source_time:
+            timestamp = convert_to_timestamp(source_time)
+        else:
+            timestamp = source_time
+
+        news_results.append({
+            'title': title,
+            'link': link,
+            'description': description,
+            'source_time': source_time,
+            'timestamp': timestamp
+        })
     
-    return urls, limit
+    return news_results
 
 def main():
     query = input("Enter your search query: ")
     time_range = get_time_range()
-    limit = int(input("Enter the number of news titles to scrape: "))
+    limit = int(input("Enter the number of news titles to scrape (max 300): "))
     
-    urls, actual_limit = generate_urls(query, time_range, limit)
+    total_results = get_total_results(query, time_range)
+    limit = min(limit, total_results, 300)
     
-    print(f"\nURLs to scrape {actual_limit} news titles (or all available if less):")
-    for i, url in enumerate(urls, 1):
-        print(f"\nURL {i}:")
+    all_news_data = []
+    for start in range(0, limit, 100):
+        url = generate_url(query, time_range, start)
         print(url)
+        print(f"\nFetching results {start+1} to {min(start+100, limit)}...")
+        news_data = extract_news_data(url)
+        all_news_data.extend(news_data)
+        
+        if len(all_news_data) >= limit:
+            break
+        
+        time.sleep(2)  # Add a delay to avoid overwhelming the server
+    
+    all_news_data = all_news_data[:limit]
+    
+    print(f"\nExtracted {len(all_news_data)} news items.")
+    
+    # Create a DataFrame from the extracted data
+    df = pd.DataFrame(all_news_data)
+    
+    # Generate a filename based on the query and current timestamp
+    filename = f"google_news_{query.replace(' ', '_')}_{int(time.time())}.csv"
+    
+    # Save the DataFrame to a CSV file
+    df.to_csv(filename, index=False, encoding='utf-8-sig')
+    
+    print(f"\nData saved to {filename}")
 
 if __name__ == "__main__":
     main()
