@@ -1,3 +1,4 @@
+import argparse
 import urllib.parse
 import requests
 from bs4 import BeautifulSoup
@@ -6,23 +7,17 @@ import time
 from requests_html import HTMLSession
 import pandas as pd
 from datetime import datetime, timedelta
+import logging
 
-def get_time_range():
-    print("\nSelect a time range:")
-    print("0. Most recent (no time filter)")
-    print("1. Recent past hours")
-    print("2. Last 24 hours")
-    print("3. Past week")
-    print("4. Last month")
-    print("5. Last year")
-    print("6. Custom date range")
-    
-    choice = input("Enter your choice (0-6): ")
-    
+# Configure logging
+logging.basicConfig(filename='google_news_scraper.log', level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
+
+def get_time_range(choice, hours=None, start_date=None, end_date=None):
     if choice == '0':
         return ""
     elif choice == '1':
-        hours = int(input("Enter the number of past hours: "))
+        if not hours:
+            raise ValueError("Number of hours must be provided for choice 1.")
         return f"qdr:h{hours}"
     elif choice == '2':
         return "qdr:d"
@@ -33,12 +28,12 @@ def get_time_range():
     elif choice == '5':
         return "qdr:y"
     elif choice == '6':
-        start_date = input("Enter start date (MM/DD/YYYY): ")
-        end_date = input("Enter end date (MM/DD/YYYY): ")
+        if not start_date or not end_date:
+            raise ValueError("Start date and end date must be provided for choice 6.")
         return f"cdr:1,cd_min:{start_date},cd_max:{end_date}"
     else:
-        print("Invalid choice. Using default (no time range).")
-        return ""
+        raise ValueError("Invalid choice.")
+
 
 def get_total_results(query, time_range):
     base_url = "https://www.google.com/search"
@@ -54,19 +49,24 @@ def get_total_results(query, time_range):
     try:
         session = HTMLSession()
         r = session.get(url)
-        r.html.render(sleep=4) 
+        r.html.render(sleep=4)
+        r.raise_for_status()  # Raise HTTPError for bad responses
         soup = BeautifulSoup(r.html.raw_html, "html.parser")
         result_stats = soup.find('div', {'id': 'result-stats'})
         if result_stats:
             total_results = int(''.join(filter(str.isdigit, result_stats.text)))
-            print(f"Total results found: {total_results}, but Google typically shows a maximum of 300 results.")
+            logging.info(f"Total results found: {total_results}, but Google typically shows a maximum of 300 results.")
             return min(total_results, 300)  
         else:
-            print("Couldn't find total results. Defaulting to 300.")
+            logging.warning("Couldn't find total results. Defaulting to 300.")
             return 300
-    except Exception as e:
-        print(f"Error fetching total results: {e}")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error fetching total results: {e}")
         return 300
+    except Exception as e:
+        logging.error(f"Unexpected error fetching total results: {e}")
+        return 300
+
 
 def generate_url(query, time_range, start):
     base_url = "https://www.google.com/search"
@@ -81,6 +81,7 @@ def generate_url(query, time_range, start):
     
     return f"{base_url}?{urllib.parse.urlencode(params)}"
 
+
 def convert_to_timestamp(relative_time):
     current_time = datetime.now()
     time_units = {
@@ -92,14 +93,20 @@ def convert_to_timestamp(relative_time):
         "days": "days",
         "week": "weeks",
         "weeks": "weeks",
-        "month": "days",  
+        "month": "days",
         "months": "days",
-        "year": "days",   
+        "year": "days",
         "years": "days"
     }
 
-    number, unit = relative_time.split()[:2]
-    number = int(number)
+    try:
+        number, unit = relative_time.split()[:2]
+        number = int(number)
+    except ValueError:
+        logging.warning("Can't change time")
+        # Handle cases where number cannot be converted to int (e.g., 'LIVE31', 'Just now', 'Now', etc.)
+        return current_time.strftime("%Y-%m-%d %H:%M:%S")
+
     if "month" in unit:
         number *= 30
     elif "year" in unit:
@@ -109,68 +116,102 @@ def convert_to_timestamp(relative_time):
     timestamp = current_time - delta
     return timestamp.strftime("%Y-%m-%d %H:%M:%S")
 
-def extract_news_data(url):
-    session = HTMLSession()
-    r = session.get(url)
-    r.html.render(sleep=4) 
-    soup = BeautifulSoup(r.html.raw_html, "html.parser")
-    news_results = []
-    for item in soup.find_all('div', class_='SoaBEf'):
-        title = item.find('div', class_='MBeuO').text if item.find('div', class_='MBeuO') else 'N/A'
-        link = item.find('a', class_='WlydOe')['href'] if item.find('a', class_='WlydOe') else 'N/A'
-        description = item.find('div', class_='GI74Re').text if item.find('div', class_='GI74Re') else 'N/A'
-        source_time = item.find('div', class_='OSrXXb').text if item.find('div', class_='OSrXXb') else 'N/A'
-        
-        if 'ago' in source_time:
-            timestamp = convert_to_timestamp(source_time)
-        else:
-            timestamp = source_time
 
-        news_results.append({
-            'title': title,
-            'link': link,
-            'description': description,
-            'source_time': source_time,
-            'timestamp': timestamp
-        })
+def extract_news_data(url):
+    try:
+        session = HTMLSession()
+        r = session.get(url)
+        r.html.render(sleep=4)
+        r.raise_for_status()  # Raise HTTPError for bad responses
+        soup = BeautifulSoup(r.html.raw_html, "html.parser")
+        news_results = []
+        for item in soup.find_all('div', class_='SoaBEf'):
+            title = item.find('div', class_='MBeuO').text if item.find('div', class_='MBeuO') else 'N/A'
+            link = item.find('a', class_='WlydOe')['href'] if item.find('a', class_='WlydOe') else 'N/A'
+            description = item.find('div', class_='GI74Re').text if item.find('div', class_='GI74Re') else 'N/A'
+            source_time = item.find('div', class_='OSrXXb rbYSKb LfVVr').text if item.find('div', class_='OSrXXb rbYSKb LfVVr') else 'N/A'
+            
+            if 'ago' in source_time:
+                timestamp = convert_to_timestamp(source_time)
+            else:
+                timestamp = source_time
+
+            news_results.append({
+                'title': title,
+                'link': link,
+                'description': description,
+                'source_time': source_time,
+                'timestamp': timestamp
+            })
+        
+        return news_results
     
-    return news_results
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error extracting news data from {url}: {e}")
+        return []
+    except Exception as e:
+        logging.error(f"Unexpected error extracting news data from {url}: {e}")
+        return []
+
 
 def main():
-    query = input("Enter your search query: ")
-    time_range = get_time_range()
-    limit = int(input("Enter the number of news titles to scrape (max 300): "))
-    
-    total_results = get_total_results(query, time_range)
-    limit = min(limit, total_results, 300)
-    
+    parser = argparse.ArgumentParser(description='Google News Scraper')
+    parser.add_argument('query', type=str, help='Search query')
+    parser.add_argument('--time_range', type=str, help='Time range filter (0-6)')
+    parser.add_argument('--hours', type=int, help='Number of hours for time filter (choice 1)')
+    parser.add_argument('--start_date', type=str, help='Start date for custom range (MM/DD/YYYY, choice 6)')
+    parser.add_argument('--end_date', type=str, help='End date for custom range (MM/DD/YYYY, choice 6)')
+    parser.add_argument('--limit', type=int, default=300, help='Limit number of news items (default: 300)')
+    args = parser.parse_args()
+
+    if args.time_range:
+        try:
+            time_range = get_time_range(args.time_range, args.hours, args.start_date, args.end_date)
+        except ValueError as e:
+            logging.error(f"Error in time range parameters: {e}")
+            return
+    else:
+        time_range = ""
+
+    total_results = get_total_results(args.query, time_range)
+    limit = min(args.limit, total_results, 300)
+
     all_news_data = []
     for start in range(0, limit, 100):
-        url = generate_url(query, time_range, start)
-        print(url)
-        print(f"\nFetching results {start+1} to {min(start+100, limit)}...")
+        url = generate_url(args.query, time_range, start)
+        logging.info(f"Fetching results {start+1} to {min(start+100, limit)} from {url}...")
         news_data = extract_news_data(url)
         all_news_data.extend(news_data)
         
         if len(all_news_data) >= limit:
             break
         
-        time.sleep(2)  
+        time.sleep(5)  
     
     all_news_data = all_news_data[:limit]
     
-    print(f"\nExtracted {len(all_news_data)} news items.")
-    
-   
-    df = pd.DataFrame(all_news_data)
-    
-   
-    filename = f"google_news_{query.replace(' ', '_')}_{int(time.time())}.csv"
-    
-    
-    df.to_csv(filename, index=False, encoding='utf-8-sig')
-    
-    print(f"\nData saved to {filename}")
+    logging.info(f"Extracted {len(all_news_data)} news items.")
+
+    try:
+        df = pd.DataFrame(all_news_data)
+        
+        # Format current time
+        current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        # Append selected time range option
+        if args.time_range:
+            time_range_suffix = f"_option_{args.time_range}"
+        else:
+            time_range_suffix = "_option_None"
+
+        filename = f"google_news_{args.query.replace(' ', '_')}{time_range_suffix}_{current_time}.csv"
+        
+        #df.to_csv(filename, index=False, encoding='utf-8-sig')
+        df.to_csv(filename, index=False)
+        logging.info(f"Data saved to {filename}")
+    except Exception as e:
+        logging.error(f"Error saving data to CSV: {e}")
+
+
 
 if __name__ == "__main__":
     main()

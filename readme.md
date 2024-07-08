@@ -29,10 +29,36 @@ This Python script scrapes Google News search results based on user input query 
     ```bash
     pip install -r requirements.txt
 
-3. **Install dependencies:**
+3. **Run Command Examples:**
+    1. Most recent (no time filter):
     ```bash
-    python main.py
-
+    python your_script.py "your search query" --limit 100
+    ```
+    2. Recent past hours: :
+    ```bash
+    python your_script.py "your search query" --time_range 1 --hours 6 --limit 100
+    ```
+    3. Last 24 hours:
+    ```bash
+    python your_script.py "your search query" --time_range 2 --limit 200
+    ```
+    4. Past week:
+    ```bash
+    python your_script.py "your search query" --time_range 3 --limit 150
+    ```
+    5. Last month:
+    ```bash
+    python your_script.py "your search query" --time_range 4 --limit 300
+    ```
+    6. Last year:
+    ```bash
+    python your_script.py "your search query" --time_range 5 --limit 250
+    ```
+    7. Custom date range:
+    ```bash
+    python your_script.py "your search query" --time_range 6 --start_date "06/01/2024" --end_date "06/30/2024" --limit 200
+    ```
+    
 4. **Follow the prompts:**
     Enter your search query.
     Select a time range or choose '0' for the most recent articles.
@@ -60,7 +86,7 @@ This Python script scrapes Google News search results based on user input query 
 
 2. **Output:**
     Scraping 50 news articles related to "artificial intelligence" from the past week.
-    Data saved to google_news_artificial_intelligence_1625813737.csv.
+    Data saved to google_news_games_option_6_2024-07-09_01-13-04.csv.
 
 
 ## Sample files also attached
