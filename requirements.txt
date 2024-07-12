@@ -3,3 +3,4 @@ beautifulsoup4
 requests_html
 pandas
 lxml[html_clean]
+numpy
